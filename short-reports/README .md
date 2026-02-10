@@ -5,7 +5,7 @@ flowchart TD
   work_name["ПО"]:::LBlue --> subsys_y1["y1"]:::LBlue 
   work_name["ПО"]:::LBlue --> subsys_y2["y2"]:::LBlue 
   work_name["ПО"]:::LBlue --> subsys_y3["y3"]:::LBlue 
-classDef LBlue stroke-width:1px, stroke-dasharray:none, stroke:#717DD7, fill:#717DD7, color:#000000
+classDef LBlue stroke-width:1px, stroke-dasharray:none, stroke:#717DD7, fill:#386257, color:#000000
 ```
 
 ## Выполнение
@@ -35,7 +35,7 @@ xychart-beta
         <th>Номер</th><th>Требование</th>
         <th>Количество</th></tr></thead>
         <tbody>
-<tr><td>1</td><td></td><td>119</td></tr><tr><td>2</td><td>требование 1: описание</td><td>96</td></tr></tbody></table>
+<tr><td>1</td><td>требование 1: описание</td><td>119</td></tr><tr><td>2</td><td>требование 2: описание</td><td>96</td></tr></tbody></table>
 
 
 ## у1
