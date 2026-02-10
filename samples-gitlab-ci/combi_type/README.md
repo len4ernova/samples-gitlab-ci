@@ -1,4 +1,7 @@
-gitlab-ci.yaml - конвеер встраивался в проект C++ ( ![Pipeline C++ project](combi_1.png) ). 
+gitlab-ci.yaml - конвеер встраивался в проект C++ 
+
+![Pipeline C++ project](combi_1.png)  
+
 Состоит из:
 - компонеты:
     + cppcheck 
