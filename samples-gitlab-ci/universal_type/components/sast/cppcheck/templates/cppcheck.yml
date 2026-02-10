@@ -1,0 +1,73 @@
+spec:
+  inputs:
+    job-prefix:     # Mandatory string input
+      type: string
+      default: cppcheck
+      description: "Префикс для имени задания"
+    stage:
+      type: string
+      default: static analysis
+      description: "Этап выполнения задания"
+    image:
+      type: string
+      default: gitlab.iifrf.local:5050/infrastructure/hub/astra_se1.6_cppcheck:update12
+      description: "Полное имя image"
+    report:
+      type: string
+      default: check.xml
+      description: "Имя отчета"
+    workspace:
+      type: string
+      default: .
+      description: "Директория для анализа"
+    expire-in:
+      type: string
+      default: 1 week
+      description: "Время хранения артефактов задания"
+    allow-failure:
+      type: boolean
+      default: true
+      description: "В случае сбоя не прерывать конвеер"
+    needs-array:
+      type: array
+      default: []
+      description: "Выполнить задание сразу после перечисленных заданий"
+    when-save-artifacts:
+      type: string
+      default: always
+      description: "Сохранять артефакты (always - всегда, never)"
+    rules-config:
+      type: array
+      default:
+        - if: '$CI_COMMIT_BRANCH =~ /^master*/'
+      description: "Условие добавления задания в конвеер"
+---
+
+$[[ inputs.job-prefix ]]:
+  image: $[[ inputs.image ]]
+  stage: $[[ inputs.stage ]]
+  dependencies: []     # Don't fetch any artifacts
+  allow_failure: $[[ inputs.allow-failure ]]
+  needs: $[[ inputs.needs-array ]]
+  script:
+    - res=$(cppcheck --version)
+    - res0=${res##* }
+    - res1="cppcheck"
+    - params=""
+    - |
+      str="{\"tool\": \""$res1"\", \"version\": \""$res0"\", \"params\": [\""$params"\"]}"
+      echo $str > tool.json
+    - cat tool.json
+    - cppcheck --xml-version=2 $[[ inputs.workspace ]] 2>$[[ inputs.report ]] || exit_code=$?
+    - mkdir -p $[[ inputs.job-prefix ]]/artifacts
+    - cp $[[ inputs.report ]] $[[ inputs.job-prefix ]]/artifacts
+    - cp tool.json $[[ inputs.job-prefix ]]
+    - exit $exit_code
+  artifacts:
+    name: $[[ inputs.job-prefix ]]
+    when: $[[ inputs.when-save-artifacts ]]
+    paths:
+      - $[[ inputs.report ]]
+      - $[[ inputs.job-prefix ]]
+    expire_in: $[[ inputs.expire-in ]]
+  rules: $[[ inputs.rules-config ]]

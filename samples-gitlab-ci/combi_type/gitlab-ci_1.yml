@@ -1,0 +1,221 @@
+.commit_develop: &commit_develop
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    - if: '$CI_COMMIT_BRANCH =~ /^develop.*/'
+
+variables:
+  CONTAINER_IMAGE: $CI_REGISTRY_IMAGE:1.0
+  IMAGE_CURL:      $CONTAINER_IMAGE
+  PROJECT_KEY_SQ:  "test_key...NfiDv"
+  DD_PRODUCT:      Test
+
+
+include:
+  - component: $CI_SERVER_FQDN/infrastructure/sast/cppcheck/cppcheck@1.0.0
+    inputs:
+      job-prefix: cppcheck
+      image: gitlab.iifrf.local:5050/infrastructure/hub/astra_se1.6_cppcheck:update12
+      needs-array: [build-job]
+      report: $CPPCHECK
+      workspace: src/
+      rules-config: *commit_develop
+
+  - component: $CI_SERVER_FQDN/infrastructure/sast/semgrep/semgrep@1.0.2
+    inputs:
+      job-prefix: semgrep-secret
+      stage: static analysis
+      needs-array: [build-job]
+      report: $SEMGREP_SECRET
+      rules-semgrep: p/secrets
+      rules-config: *commit_develop
+
+  - component: $CI_SERVER_FQDN/infrastructure/sast/sonarqube/sonarqube@1.0.1
+    inputs:
+      job-prefix: sonarqube
+      needs-array: [cppcheck]
+      sonar-project-key: $PROJECT_KEY_SQ
+      sonar-host-url: $SONAR_HOST_URL
+      rules-config: *commit_develop
+
+  - component: $CI_SERVER_FQDN/infrastructure/othertools/defectdojo/send-report@1.0.0
+    inputs:
+      job-prefix: dd-semgrep-secret
+      dd-url: $DEFECTDOJO_URL
+      dd-api-token: $DEFECT_DOJO_API_TOKEN
+      needs-array: [semgrep-secret]
+      dd-product-name: $DD_PRODUCT
+      dd-engagement: $DD_ENGAGEMENT
+      dd-report-file-name: $SEMGREP_SECRET
+      dd-scan-type: Semgrep JSON Report
+      dd-test-title: Semgrep secrets
+      rules-config: *commit_develop
+      
+  - component: $CI_SERVER_FQDN/infrastructure/sca/osv/osv-api-databases@1.0.1
+    inputs:
+        job-prefix: osv-dpkg
+        stage: composition analysis
+        image: "gitlab.iifrf.local:5050/infrastructure/hub/osv:1.7.0"
+        needs-array: [build-job]
+        lockfile: dpkg-status-file
+        report: $OSV
+        rules-config: *commit_develop
+
+  - component: $CI_SERVER_FQDN/infrastructure/othertools/defectdojo/send-report@1.0.0
+    inputs:
+      job-prefix: dd-osv-dpkg
+      dd-url: $DEFECTDOJO_URL
+      dd-api-token: $DEFECT_DOJO_API_TOKEN
+      needs-array: [osv-dpkg]
+      dd-product-name: $DD_PRODUCT
+      dd-engagement: $DD_ENGAGEMENT
+      dd-report-file-name: $OSV
+      dd-scan-type: OSV Scan
+      dd-test-title: osv-dpkg
+      rules-config: *commit_develop
+
+
+  - project: 'Infrastructure/ci'
+    ref: master
+    file:
+      - 'templates/docker/.build_image.yml'
+      - 'global-variables.yml'
+ 
+  
+stages:
+- .pre
+- build
+- static analysis
+- test
+- composition analysis
+- analysis report
+
+
+workflow:
+  rules:
+    # For merge requests created to `master` branch
+    - if: '$CI_MERGE_REQUEST_IID && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "master"'
+    # For merge requests created to `main` branch from `develop` branch
+    - if: '$CI_MERGE_REQUEST_IID && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "master" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == "develop.*"'
+    - if: '$CI_COMMIT_BRANCH =~ /^master|develop.*/'
+    # For tags starting with v prefix, create a pipeline
+    - if: '$CI_COMMIT_TAG =~ /^v.*/'                 
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+
+
+build-image:
+  stage: .pre
+  variables:
+    BUILD_CONTEXT: "."
+    DOCKER_FILE: "Dockerfile"
+    OUT_IMAGE: "$CONTAINER_IMAGE"
+  extends: .build_image
+  rules: &change_dockerfile
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    - if: '$CI_COMMIT_BRANCH =~ /^develop.*/'
+      changes:
+        - Dockerfile
+
+
+build-job:
+  stage: build
+  image: $CONTAINER_IMAGE
+  script:
+    - ./src/build.sh ./src /module  2>build.log
+    - cp /var/lib/dpkg/status ./dpkg-status-file
+  artifacts:
+    name: "$CI_JOB_NAME"
+    paths:
+     - Module.bin
+     - ManualTest.bin
+     - build.log
+     - dpkg-status-file
+  rules:  &commit_develop
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    - if: '$CI_COMMIT_BRANCH =~ /^develop.*/'
+
+
+# DAST
+manual-test:
+  stage: test
+  needs: [build-job]
+  image: $CONTAINER_IMAGE
+  #  needs: ["build_job"]
+  script:
+    - mkdir Module
+    - |
+      cp    Module.bin \
+            ManualTest.bin \
+            Module.json \
+            module.syslog.debug.logconf \
+            redis.json \
+            settings.json \
+            Module
+    - cp -R Module /opt
+    - cd /opt/Module
+    - ls -al
+    - cat settings.json
+    - cat Module.json
+    - ip a
+    - ./ManualTest.bin
+  rules:     *commit_develop
+
+
+manual-test-coverage:
+  stage: test
+  when: manual
+  image: $CONTAINER_IMAGE
+  needs: [build-job]
+  dependencies: []     # Don't fetch any artifacts
+  variables:
+    BINDIR: /opt/Module/
+    SRCDIR: /opt/Module/src
+  script:
+    - cd ..
+    - cp -R module /opt
+    - cd /opt/
+    - mv module Module
+    - cd Module
+
+    - mkdir /opt/Module/tmp1
+    - cd /opt/Module/tmp1
+    - cmake -G "Unix Makefiles" $SRCDIR/Module -DCMAKE_BUILD_TYPE:STRING=Release -DCOVER=On
+    - make
+    - cp Module.bin $BINDIR/Module.bin
+    - cd ..
+
+    - mkdir /opt/Module/tmp2
+    - cd /opt/Module/tmp2
+    - cmake -G "Unix Makefiles" $SRCDIR/ManualTest -DCMAKE_BUILD_TYPE:STRING=Release -DCOVER=On
+    - make
+    - cp ManualTest.bin $BINDIR/ManualTest.bin
+    - cd ..
+    - ./ManualTest.bin
+    - ls
+    - lcov -d . -c -o coverage.info
+    - lcov -r coverage.info */Module/* */c++/* -o coverageFiltered.info
+    - lcov --list coverageFiltered.info
+    - cd /builds/test/module
+    - mkdir cov_report
+    - genhtml -o ./cov_report/ /opt/Module/coverageFiltered.info
+  coverage: '/Total:\|\s*([0-9.]+%)\s.*$/'
+  artifacts:
+    name: "$CI_JOB_NAME"
+    paths:
+      - cov_report/
+  rules:    *commit_develop
+
+
+fuzzing_job:
+  stage: test
+  variables:
+  trigger:
+    FULL_IMAGE_NAME_FUZZING: "172.17.0.1:5050/test/module/betamail_fuzzer:latest"
+    include:
+      - local: 'fuzzing/.fuzzing.yml'
+  rules:    &rules_test
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    - if: '$CI_COMMIT_BRANCH =~ /^master|develop$/'
+

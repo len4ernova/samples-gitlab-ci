@@ -1,0 +1,13 @@
+stage: [release]
+include:
+  - component: '$CI_SERVER_FQDN/infrastructure/ci/docker-build@master'
+
+create-release:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  script: echo "Creating release $CI_COMMIT_TAG"
+  rules:
+    - if: $CI_COMMIT_TAG
+  release:
+    tag_name: $CI_COMMIT_TAG
+    description: "Release $CI_COMMIT_TAG of components repository $CI_PROJECT_PATH"

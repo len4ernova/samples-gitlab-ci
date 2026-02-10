@@ -1,0 +1,72 @@
+
+stages:
+  - .pre
+  - build
+
+workflow:
+  rules:
+    - if: '$CI_MERGE_REQUEST_IID && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"'    # For merge requests created to `develop` branch
+    # For merge requests created to `main` branch from `develop` branch
+    - if: '$CI_MERGE_REQUEST_IID && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == "develop"'
+    - if: '$CI_COMMIT_BRANCH =~ /^main|cache_shuffles$/' # For `main` and `develop` branch, create a pipeline (this includes on schedules, pushes, merges, etc.).
+    - if: '$CI_COMMIT_TAG =~ /^v.*/'              # For tags starting with v prefix, create a pipeline
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'     # For manual runs, create a pipeline
+    - if: '$CI_PIPELINE_SOURCE == "push"'         # For push
+
+default:
+  image: $DEFAULT_IMAGE_NAME
+
+
+npm_install:
+  stage: .pre
+  cache:
+    - key: npm_install
+      paths:
+        - web/.npm/
+      policy: pull-push
+    - &node_modules_cache
+      key: node_modules
+      paths:
+        - web/node_modules/
+        - web/package-lock.json
+      policy: pull-push
+  script:
+    - cd web
+    - npm install --cache .npm/ --prefer-offline
+  rules: *commit_main_develop
+
+
+build:
+  stage: build
+  needs: [npm_install]
+  cache:
+    - <<: *node_modules_cache
+      policy: pull
+  script:
+    - cd /web
+    - npm run build
+  artifacts:
+    name: "$CI_JOB_NAME"
+    paths:
+      - web/dist/
+      - web/package-lock.json
+    expire_in: 1 week
+  rules: *commit_main_develop
+
+
+build_image:
+  image: 'docker:29.2'
+  stage: build
+  needs: [build]
+#  when: manual
+  script:
+    - cd web
+    - 'docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"'
+    - docker build -t $CREATE_IMAGE_NAME .
+    - docker push $CREATE_IMAGE_NAME
+  rules: &commit_change_package
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    - if: '$CI_COMMIT_BRANCH =~ /^main|develop$/'
+      changes:
+        - web/package.json
